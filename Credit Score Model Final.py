@@ -5,7 +5,7 @@ import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
 from sklearn.naive_bayes import GaussianNB
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import CountVectorizer
@@ -15,6 +15,8 @@ import warnings
 from wordcloud import WordCloud
 from textblob import TextBlob
 import string
+import matplotlib.backends.backend_pdf
+
 warnings.filterwarnings("ignore")
 
 # Phase 1: Data Management
@@ -30,17 +32,18 @@ print("Merging datasets...")
 master_data = pd.merge(details, info, on='custid')
 master_data = pd.merge(master_data, profiles, on='custid')
 
-# Step 3: Handling duplicates
-print("Handling duplicates...")
-master_data = master_data.drop_duplicates(subset='custid')
-
-# Step 4: Data Understanding
+# Step 3: Data Understanding
 print("Understanding the master data...")
 print("Shape of master data:", master_data.shape)
 print("Columns in master data:", master_data.columns)
 print("Data types of each column:\n", master_data.dtypes)
 print("Missing values in each column:\n", master_data.isnull().sum())
 print("Number of unique values in each column:\n", master_data.nunique())
+print("Summary statistics of master data:\n", master_data.describe())
+
+# Step 4: Handling duplicates
+print("Handling duplicates...")
+master_data = master_data.drop_duplicates(subset='custid')
 print("Summary statistics of master data:\n", master_data.describe())
 
 # Step 5: Data Cleaning
@@ -79,6 +82,8 @@ master_data['emp_ctg'] = pd.cut(master_data['emp'], bins=emp_bins, labels=['(0-3
 # Removing custid from the dataset as it is an identifier
 master_data = master_data.drop(columns=['custid'])
 
+print("Data types of each column:\n", master_data.dtypes)
+
 # Finding overall “Bad Rate/Defaulter Rate” in the data
 bad_rate = master_data['bad'].mean() * 100
 print(f"Overall Defaulter Rate: {bad_rate:.2f}%")
@@ -101,6 +106,20 @@ sns.boxplot(x='bad', y='othdebt', data=master_data, palette='pastel')
 plt.title('Other Debt by Bad')
 plt.show()
 
+# Summary statistics for numeric variables based on 'bad'
+debtinc_summary = master_data.groupby('bad')['debtinc'].describe()
+creddebt_summary = master_data.groupby('bad')['creddebt'].describe()
+othdebt_summary = master_data.groupby('bad')['othdebt'].describe()
+
+print("Debt-to-Income Ratio Summary by Bad:")
+print(debtinc_summary)
+
+print("\nCredit Debt Summary by Bad:")
+print(creddebt_summary)
+
+print("\nOther Debt Summary by Bad:")
+print(othdebt_summary)
+
 # Table of “Bad Rate” for categorical variables
 print("Table of 'Bad Rate' for categorical variables:")
 gender_bad_rate = pd.crosstab(master_data['gender'], master_data['bad'], normalize='index') * 100
@@ -117,10 +136,21 @@ plt.xlabel('Bad')
 plt.ylabel('Mean')
 plt.show()
 
+print(mean_by_bad)
+
 # Heatmap for 2 variables showing “bad rate”
 print("Generating heatmap for bad rate by zone and credit debt category...")
 selected_vars = ['zone', 'creddebt_ctg', 'bad']
 data_selected = master_data[selected_vars].dropna()
+
+# Create the pivot table
+pivot_table = data_selected.pivot_table(index='zone', columns='creddebt_ctg', values='bad', aggfunc='mean')
+
+# Display the pivot table values
+print("Pivot Table for Bad Rate by Zone and Credit Debt Category:")
+print(pivot_table)
+
+print("Generating heatmap for bad rate by zone and credit debt category...")
 plt.figure(figsize=(10, 8))
 heatmap = sns.heatmap(data_selected.pivot_table(index='zone', columns='creddebt_ctg', values='bad', aggfunc='mean'), annot=True, cmap='coolwarm', linewidths=.5)
 plt.title('Heatmap of Bad Rate by Zone and Credit Debt Category')
@@ -253,12 +283,27 @@ print(classification_report(train_labels, train_preds_nb))
 
 # Step 4: Apply Decision Tree on train data
 print("Applying Decision Tree on train data...")
-dt_model = DecisionTreeClassifier(random_state=23)
-dt_model.fit(train_data[significant_vars], train_labels)
+max_depth = 3  # Limit the depth of the tree for better visualization
+dt_model_limited = DecisionTreeClassifier(random_state=23, max_depth=max_depth)
+dt_model_limited.fit(train_data[significant_vars], train_labels)
+
+# Plot the tree with limited depth
+plt.figure(figsize=(16, 10))
+plot_tree(dt_model_limited, filled=True, feature_names=significant_vars)
+plt.title('Decision Tree Visualization (Limited Depth)')
+plt.show()
+
+# Export the tree to a PDF for better readability
+pdf = matplotlib.backends.backend_pdf.PdfPages("decision_tree.pdf")
+plt.figure(figsize=(20, 20))
+plot_tree(dt_model_limited, filled=True, feature_names=significant_vars)
+plt.title('Decision Tree Visualization')
+pdf.savefig()
+pdf.close()
 
 # Step 5: Obtain ROC curve and AUC for train data (Decision Tree)
 print("Obtaining ROC curve and AUC for train data (Decision Tree)...")
-train_probs_dt = dt_model.predict_proba(train_data[significant_vars])[:, 1]
+train_probs_dt = dt_model_limited.predict_proba(train_data[significant_vars])[:, 1]
 fpr_train_dt, tpr_train_dt, _ = roc_curve(train_labels, train_probs_dt)
 auc_train_dt = roc_auc_score(train_labels, train_probs_dt)
 print(f"Decision Tree Train AUC: {auc_train_dt:.2f}")
@@ -274,7 +319,7 @@ plt.show()
 
 # Step 6: Obtain Confusion Matrix for train data (Decision Tree)
 print("Obtaining Confusion Matrix for train data (Decision Tree)...")
-train_preds_dt = dt_model.predict(train_data[significant_vars])
+train_preds_dt = dt_model_limited.predict(train_data[significant_vars])
 conf_matrix_train_dt = confusion_matrix(train_labels, train_preds_dt)
 print("Decision Tree Train Confusion Matrix:")
 print(conf_matrix_train_dt)
@@ -370,7 +415,7 @@ print(classification_report(test_labels, test_preds_nb))
 
 # Decision Tree on Test Data
 print("Evaluating Decision Tree on Test Data...")
-test_probs_dt = dt_model.predict_proba(test_data[significant_vars])[:, 1]
+test_probs_dt = dt_model_limited.predict_proba(test_data[significant_vars])[:, 1]
 fpr_test_dt, tpr_test_dt, _ = roc_curve(test_labels, test_probs_dt)
 auc_test_dt = roc_auc_score(test_labels, test_probs_dt)
 print(f"Decision Tree Test AUC: {auc_test_dt:.2f}")
@@ -457,6 +502,28 @@ plt.axis('off')
 plt.title('Customer Feedback Word Cloud')
 plt.show()
 
+# Get top 10 most mentioned words
+vectorizer = CountVectorizer(stop_words='english')
+word_counts = vectorizer.fit_transform(feedback_data['Processed_Feedback'])
+word_freq = pd.DataFrame(word_counts.toarray(), columns=vectorizer.get_feature_names_out()).sum().sort_values(ascending=False).head(10)
+print("Top 10 Most Mentioned Words:")
+print(word_freq)
+
+# Bar Chart of top 10 most mentioned words
+plt.figure(figsize=(10, 6))
+sns.barplot(x=word_freq.values, y=word_freq.index, palette='pastel')
+plt.title('Top 10 Most Mentioned Words')
+plt.xlabel('Frequency')
+plt.ylabel('Words')
+plt.show()
+
+# Pie Chart of top 5 most mentioned words
+top_5_words = word_freq.head(5)
+plt.figure(figsize=(8, 8))
+plt.pie(top_5_words, labels=top_5_words.index, autopct='%1.1f%%', colors=sns.color_palette('pastel'))
+plt.title('Top 5 Most Mentioned Words')
+plt.show()
+
 # Step 4: Sentiment Analysis
 def get_sentiment(text):
     analysis = TextBlob(text)
@@ -485,3 +552,14 @@ plt.title('Sentiment Distribution')
 plt.xlabel('Sentiment')
 plt.ylabel('Count')
 plt.show()
+
+# Step 8: Summary statistics of sentiment scores
+sentiment_summary = feedback_data['Sentiment_Score'].describe()
+print("Summary Statistics of Sentiment Scores:")
+print(sentiment_summary)
+
+# Step 9: Distribution counts of sentiment categories
+feedback_data['Sentiment'] = feedback_data['Sentiment_Score'].apply(lambda x: 'Positive' if x > 0 else ('Negative' if x < 0 else 'Neutral'))
+sentiment_counts = feedback_data['Sentiment'].value_counts(normalize=True) * 100
+print("Sentiment Distribution (%):")
+print(sentiment_counts)
